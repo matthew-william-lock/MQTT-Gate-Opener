@@ -15,6 +15,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 import androidx.core.app.ActivityCompat;
 
+import android.os.SystemClock;
 import android.view.View;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -22,8 +23,12 @@ import android.widget.Toast;
 
 import org.eclipse.paho.android.service.MqttAndroidClient;
 import org.eclipse.paho.client.mqttv3.IMqttActionListener;
+import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
 import org.eclipse.paho.client.mqttv3.IMqttToken;
+import org.eclipse.paho.client.mqttv3.MqttCallback;
+import org.eclipse.paho.client.mqttv3.MqttCallbackExtended;
 import org.eclipse.paho.client.mqttv3.MqttClient;
+import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
 import org.eclipse.paho.client.mqttv3.MqttException;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 
@@ -37,6 +42,8 @@ public class MainActivity extends AppCompatActivity {
     private String clientID;
     private MqttAndroidClient client;
     private IMqttToken token;
+
+    private MqttConnectOptions mqttConnectOptions;
 
     Boolean state;
 
@@ -53,24 +60,29 @@ public class MainActivity extends AppCompatActivity {
         fab.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                String topic = "Hexdro/LED";
-                state=!state;
-                String payload;
-                if (state) payload="on";
-                else payload = "off";
-                byte[] encodedPayload = new byte[0];
-                try {
-                    encodedPayload = payload.getBytes("UTF-8");
-                    MqttMessage message = new MqttMessage(encodedPayload);
-                    client.publish(topic, message);
-                    Toast.makeText(MainActivity.this,payload,Toast.LENGTH_LONG).show();
-                } catch (UnsupportedEncodingException | MqttException e) {
-                    Toast.makeText(MainActivity.this,e.getMessage(),Toast.LENGTH_LONG).show();
+
+                // Only perform action if init is successful
+                if (client!=null) {
+                    String topic = "Hexdro/LED";
+                    state=!state;
+                    String payload;
+                    if (state) payload="on";
+                    else payload = "off";
+                    byte[] encodedPayload = new byte[0];
+                    try {
+                        encodedPayload = payload.getBytes("UTF-8");
+                        MqttMessage message = new MqttMessage(encodedPayload);
+                        client.publish(topic, message);
+                        Toast.makeText(MainActivity.this,payload,Toast.LENGTH_SHORT).show();
+                    } catch (UnsupportedEncodingException | MqttException e) {
+                        Toast.makeText(MainActivity.this,e.getMessage(),Toast.LENGTH_SHORT).show();
+                    }
                 }
+
             }
         });
 
-        // Check permissions
+        // Check required permissions
         if (Build.VERSION.SDK_INT >= 23) {
             String[] PERMISSIONS = {Manifest.permission.WAKE_LOCK, Manifest.permission.INTERNET, Manifest.permission.ACCESS_NETWORK_STATE,Manifest.permission.READ_PHONE_STATE};
             if (!hasPermissions(mContext, PERMISSIONS)) {
@@ -78,26 +90,15 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        clientID = MqttClient.generateClientId();
-        client = new MqttAndroidClient(this.getApplicationContext(), "tcp://test.mosquitto.org:1883",clientID);
+        // New Thread to handel MQTT
+        Thread mqttThread = new Thread(){
+            public void run(){
+                mqttInit();
+            }
+        };
 
-        try{
-            token = client.connect();
-            token.setActionCallback(new IMqttActionListener() {
-                @Override
-                public void onSuccess(IMqttToken asyncActionToken) {
-                    Toast.makeText(MainActivity.this,"Connected!",Toast.LENGTH_LONG).show();
-                }
-
-                @Override
-                public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
-                    Toast.makeText(MainActivity.this,"Failed to connect.",Toast.LENGTH_LONG).show();
-                }
-            });
-        }
-        catch (MqttException e){
-            Toast.makeText(MainActivity.this,e.getMessage(),Toast.LENGTH_LONG).show();
-        }
+        // Start Thread
+        mqttThread.run();
 
     }
 
@@ -142,10 +143,67 @@ public class MainActivity extends AppCompatActivity {
                 if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                     //do here
                 } else {
-                    Toast.makeText(mContext, "The app was not allowed to write in your storage", Toast.LENGTH_LONG).show();
+                    Toast.makeText(mContext, "The app was not allowed to write in your storage", Toast.LENGTH_SHORT).show();
                 }
             }
         }
+    }
+
+    // Init MQTT
+    private void mqttInit(){
+
+        // Setup client
+        clientID = MqttClient.generateClientId();
+        client = new MqttAndroidClient(this.getApplicationContext(), "tcp://test.mosquitto.org:1883",clientID);
+
+        mqttConnectOptions = new MqttConnectOptions();
+        mqttConnectOptions.setAutomaticReconnect(true);
+
+
+        client.setCallback(new MqttCallbackExtended() {
+            @Override
+            public void connectComplete(boolean reconnect, String serverURI) {
+                Toast.makeText(MainActivity.this,"Connected!",Toast.LENGTH_SHORT).show();
+            }
+
+            @Override
+            public void connectionLost(Throwable cause) {
+                Toast.makeText(MainActivity.this,"Lost Connection...",Toast.LENGTH_SHORT).show();
+            }
+
+            @Override
+            public void messageArrived(String topic, MqttMessage message) throws Exception {
+
+            }
+
+            @Override
+            public void deliveryComplete(IMqttDeliveryToken token) {
+
+            }
+        });
+
+
+
+        // Connect
+        try{
+            token = client.connect(mqttConnectOptions);
+            token.setActionCallback(new IMqttActionListener() {
+                @Override
+                public void onSuccess(IMqttToken asyncActionToken) {
+//                    Toast.makeText(MainActivity.this,"Connected! "+client.isConnected(),Toast.LENGTH_SHORT).show();
+                }
+
+                @Override
+                public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
+                    Toast.makeText(MainActivity.this,"Failed to connect.",Toast.LENGTH_SHORT).show();
+                }
+
+            });
+        }
+        catch (MqttException e){
+            Toast.makeText(MainActivity.this,e.getMessage(),Toast.LENGTH_SHORT).show();
+        }
+
     }
 
 }

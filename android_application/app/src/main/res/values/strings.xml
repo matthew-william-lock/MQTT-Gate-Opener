@@ -9,4 +9,7 @@
 
     <string name="hello_first_fragment">Hello first fragment</string>
     <string name="hello_second_fragment">Hello second fragment. Arg: %1$s</string>
+
+    <string name="gate_button_open_string">Open Gate</string>
+    <string name="gate_button_close_string">Close Gate</string>
 </resources>
