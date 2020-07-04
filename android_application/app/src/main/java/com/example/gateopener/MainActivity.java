@@ -2,20 +2,20 @@ package com.example.gateopener;
 
 import android.Manifest;
 import android.app.Activity;
-import android.app.ProgressDialog;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Bundle;
 
-import com.google.android.material.floatingactionbutton.FloatingActionButton;
-
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 import androidx.core.app.ActivityCompat;
 
+import android.os.Handler;
+import android.os.Looper;
+import android.os.Message;
 import android.view.View;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -34,33 +34,45 @@ import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
 import org.eclipse.paho.client.mqttv3.MqttException;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.UnsupportedEncodingException;
+import java.util.Timer;
+import java.util.TimerTask;
 
 public class MainActivity extends AppCompatActivity {
 
-    // Topics
+    /* Topics */
     public static final String GATE_COMMAND_TOPIC = "Hexdro/Gate/Command";
     public static final String GATE_STATUS_TOPIC = "Hexdro/Gate/Status";
     public static final String GATE_OPENING_STATUS = "opening";
     public static final String GATE_CLOSING_STATUS = "closing";
+    public static final String GATE_ACK_REQ = "Hexdro/Gate/AckReq";
+    public static final String GATE_ACK_REP = "Hexdro/Gate/AckReply";
 
-    // UI
+    /* Timer */
+    public static final int TIMER_PERIOD = 3000;
+
+    /* UI */
     Button gateButon;
     private ProgressBar spinner;
 
+    /* Permissions */
     private Context mContext=MainActivity.this;
     private static final int REQUEST = 112;
 
+    /* Mqtt */
     private String clientID;
     private MqttAndroidClient client;
     private IMqttToken token;
-
     private MqttConnectOptions mqttConnectOptions;
 
+    /* State Keeping */
     Boolean state;
     Boolean firstStart=true;
+    int ackSent=0;
+    int ackReceived=0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -71,7 +83,7 @@ public class MainActivity extends AppCompatActivity {
 
         state=false;
 
-        // UI
+        /* Ui */
         gateButon = findViewById(R.id.gate_btn);
         gateButon.setVisibility(View.INVISIBLE);
         spinner=(ProgressBar)findViewById(R.id.loading_spinner);
@@ -104,6 +116,21 @@ public class MainActivity extends AppCompatActivity {
 
         // Start Thread
         mqttThread.run();
+
+        final Handler mHandler = new Handler(Looper.getMainLooper()) {
+            @Override
+            public void handleMessage(Message message) {
+                ackRequest();
+            }
+        };
+
+        new Timer().scheduleAtFixedRate(new TimerTask() {
+            @Override
+            public void run() {
+                Message message = mHandler.obtainMessage(1, "ack_request");
+                message.sendToTarget();
+            }
+        }, 0, TIMER_PERIOD);//put here time 1000 milliseconds=1 second
 
     }
 
@@ -199,10 +226,11 @@ public class MainActivity extends AppCompatActivity {
     // Init MQTT
     private void mqttInit(){
 
-        // Setup client
+        /* Setup Client */
         clientID = MqttClient.generateClientId();
         client = new MqttAndroidClient(this.getApplicationContext(), "tcp://test.mosquitto.org:1883",clientID);
 
+        /* Connect to Client */
         mqttConnectOptions = new MqttConnectOptions();
         mqttConnectOptions.setAutomaticReconnect(true);
 
@@ -213,27 +241,26 @@ public class MainActivity extends AppCompatActivity {
                 Toast.makeText(MainActivity.this,"Connected!",Toast.LENGTH_SHORT).show();
                 subscribe();
 
-                // Enable button
+                /* Enable button */
                 gateButon.setEnabled(true);
             }
 
             @Override
             public void connectionLost(Throwable cause) {
-                // Disable button
+                /* Disable button */
                 gateButon.setEnabled(false);
-
                 Toast.makeText(MainActivity.this,"Lost Connection...",Toast.LENGTH_SHORT).show();
             }
 
             @Override
             public void messageArrived(String topic, MqttMessage message) throws Exception {
 
-//                Toast.makeText(MainActivity.this, "Message on : "+topic,Toast.LENGTH_SHORT).show();
-//                Toast.makeText(MainActivity.this, message.toString(),Toast.LENGTH_SHORT).show();
+                /* Show messages and topic received - for debugging */
+                /* Toast.makeText(MainActivity.this, "Message on : "+topic,Toast.LENGTH_SHORT).show();
+                Toast.makeText(MainActivity.this, message.toString(),Toast.LENGTH_SHORT).show();  */
 
                 if (topic.equals(GATE_COMMAND_TOPIC) ){
-//                    JSONObject reader = new JSONObject(message.toString());
-//                    Toast.makeText(MainActivity.this, message.toString(),Toast.LENGTH_SHORT).show();
+//                    /* Do stuff*/
                 }
 
                 else if (topic.equals(GATE_STATUS_TOPIC)) {
@@ -254,11 +281,17 @@ public class MainActivity extends AppCompatActivity {
                         gateButon.setEnabled(true);
                         showGateButton();
                     }
-
-
-
                 }
 
+                else if(topic.equals(GATE_ACK_REP)){
+                    JSONObject reader = new JSONObject(message.toString());
+                    JSONObject ack_response  = reader.getJSONObject("ack_response");
+
+                    // Toast.makeText(MainActivity.this, client,Toast.LENGTH_SHORT).show();
+                    String client = ack_response.getString("client");
+                    if (client.equals(clientID)) ackReceived++;
+
+                }
 
             }
 
@@ -315,7 +348,27 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(MainActivity.this,e.getMessage(),Toast.LENGTH_SHORT).show();
         }
 
+        try {
+            IMqttToken subToken = client.subscribe(GATE_ACK_REP, qos);
+            subToken.setActionCallback(new IMqttActionListener() {
+                @Override
+                public void onSuccess(IMqttToken asyncActionToken) {
+                }
+
+                @Override
+                public void onFailure(IMqttToken asyncActionToken,Throwable exception) {
+                    Toast.makeText(MainActivity.this,"Could not connect to "+GATE_STATUS_TOPIC,Toast.LENGTH_SHORT).show();
+                }
+            });
+        } catch (MqttException e) {
+            Toast.makeText(MainActivity.this,e.getMessage(),Toast.LENGTH_SHORT).show();
+        }
+
     }
+
+    /* =============================================================================================================================================================
+     * Send mqtt command to toggle gate open/close
+     * ============================================================================================================================================================= */
 
     private void toggleGate(){
         gateButon.setEnabled(false);
@@ -337,6 +390,10 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /* =============================================================================================================================================================
+     * Show button once connected to client
+     * ============================================================================================================================================================= */
+
     private void showGateButton(){
         if (firstStart){
             gateButon.setVisibility(View.VISIBLE);
@@ -344,6 +401,46 @@ public class MainActivity extends AppCompatActivity {
             gateButon.startAnimation(expandIn);
             spinner.setVisibility(View.GONE);
             firstStart=!firstStart;
+        }
+    }
+
+    /* =============================================================================================================================================================
+     * Request ack to make sure mqtt device still connected
+     * ============================================================================================================================================================= */
+
+    private void ackRequest() {
+
+        if (client.isConnected() && ackSent==ackReceived){
+            sendAck();
+            ackSent++;
+            gateButon.setEnabled(true);
+
+        } else if(client.isConnected() && ackSent!=ackReceived){
+            // Send ack until it is received again
+            Toast.makeText(MainActivity.this,"Gate is not connected.",Toast.LENGTH_SHORT).show();
+
+            sendAck();
+            gateButon.setEnabled(false);
+        }
+    }
+
+    private void sendAck(){
+        JSONObject json = new JSONObject();
+        JSONObject ack = new JSONObject();
+        try {
+            ack.put("client",clientID);
+            json.put("ack_request",ack);
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+        String payload = json.toString();
+        byte[] encodedPayload = new byte[0];
+        try {
+            encodedPayload = payload.getBytes("UTF-8");
+            MqttMessage message = new MqttMessage(encodedPayload);
+            client.publish(GATE_ACK_REQ, message);
+        } catch (UnsupportedEncodingException | MqttException e) {
+            e.printStackTrace();
         }
     }
 
