@@ -12,4 +12,5 @@
 
     <string name="gate_button_open_string">Open Gate</string>
     <string name="gate_button_close_string">Close Gate</string>
+    <string name="gate_button_toggle_string">Toggle Gate</string>
 </resources>
